@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from sqlalchemy import select
 
-# استيراد الإعدادات وقاعدة البيانات من مجلد app
+# استيراد الإعدادات وقاعدة البيانات
 from app.config import settings
 from app.database import async_session
 from app.models.student import Student
@@ -11,17 +11,30 @@ from app.models.student import Student
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# خذ التوكن من الإعدادات
 TOKEN = settings.admin_bot_token
-
 if not TOKEN:
     raise ValueError("admin_bot_token غير موجود!")
 
-# أنشئ البوت
 admin_bot = Application.builder().token(TOKEN).build()
 
-# ------------------- أمر /start -------------------
+# ------------------- وظيفة التحقق من الصلاحية (الحارس) -------------------
+async def is_owner(update: Update) -> bool:
+    """تتأكد إذا كان المستخدم هو الأستاذ (صاحب الصلاحية)"""
+    user_id = update.effective_user.id
+    if user_id != settings.owner_telegram_id:
+        await update.message.reply_text(
+            "⛔ عذراً، هذا البوت مخصص للأستاذ فقط. لا يمكنك استخدامه."
+        )
+        return False
+    return True
+
+# ------------------- أمر /start (مع الحماية) -------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # الخطوة 1: تحقق من الصلاحية
+    if not await is_owner(update):
+        return  # إذا مش الأستاذ، يطلع برا وما يكمل
+    
+    # الخطوة 2: إذا كان الأستاذ، اعرض القائمة
     keyboard = [
         [InlineKeyboardButton("👨‍🎓 إدارة الطلاب", callback_data="students")],
         [InlineKeyboardButton("➕ إضافة طالب", callback_data="add_student")],
@@ -32,8 +45,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ------------------- عرض الطلاب من قاعدة البيانات -------------------
+# ------------------- عرض الطلاب (مع الحماية) -------------------
 async def show_students(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update):
+        return
+    
     async with async_session() as session:
         try:
             result = await session.execute(select(Student).limit(20))
@@ -51,22 +67,33 @@ async def show_students(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"❌ خطأ في قاعدة البيانات: {str(e)}")
 
-# ------------------- زر إضافة طالب -------------------
+# ------------------- إضافة طالب (مع الحماية) -------------------
 async def add_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update):
+        return
+    
     await update.message.reply_text(
         "➕ لإضافة طالب، استخدم الأمر:\n"
         "/add_student الاسم رقم_الهاتف\n"
         "مثال: /add_student أحمد 0999123456"
     )
 
-# ------------------- أوامر مؤقتة -------------------
+# ------------------- الإعدادات (مع الحماية) -------------------
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update):
+        return
     await update.message.reply_text("⚙️ الإعدادات: قريباً")
 
-# ------------------- معالجة الأزرار -------------------
+# ------------------- معالجة الأزرار (مع الحماية) -------------------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
+    # الأزرار تحتاج حماية أيضاً! لأن الأستاذ بيضغط عليها
+    user_id = update.effective_user.id
+    if user_id != settings.owner_telegram_id:
+        await query.message.reply_text("⛔ هذا البوت للأستاذ فقط.")
+        return
     
     if query.data == "students":
         async with async_session() as session:
@@ -91,4 +118,4 @@ admin_bot.add_handler(CommandHandler("add_student", add_student))
 admin_bot.add_handler(CommandHandler("settings", settings_command))
 admin_bot.add_handler(CallbackQueryHandler(button_callback))
 
-logger.info("✅ Admin bot connected to DB and ready!")
+logger.info("✅ Admin bot secured and connected to DB!")
