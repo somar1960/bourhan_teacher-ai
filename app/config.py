@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -10,11 +11,11 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # AI
-    openai_api_key: str
+    # AI (اختياري حالياً)
+    openai_api_key: Optional[str] = None
 
-    # Redis
-    redis_url: str
+    # Redis (اختياري حالياً)
+    redis_url: Optional[str] = None
 
     # App
     environment: str = "development"
@@ -25,6 +26,5 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False
     )
-
 
 settings = Settings()
