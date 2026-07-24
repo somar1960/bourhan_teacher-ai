@@ -1,1 +1,18 @@
+fastapi
+uvicorn
 
+python-telegram-bot
+
+sqlalchemy
+alembic
+asyncpg
+
+python-dotenv
+pydantic-settings
+
+redis
+
+openai
+pillow
+
+pytest
