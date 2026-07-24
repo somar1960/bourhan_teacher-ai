@@ -1,5 +1,5 @@
 from sqlalchemy import String, BigInteger, Boolean, DateTime, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 
 from app.database import Base
@@ -44,6 +44,11 @@ class Student(Base):
         nullable=True
     )
 
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("groups.id"),
+        nullable=True
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True
@@ -52,4 +57,9 @@ class Student(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow
+    )
+
+    group = relationship(
+        "Group",
+        back_populates="students"
     )
