@@ -1,9 +1,10 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
 
-# ---------- Enums ----------
+# --- Enums ---
 class StudentTrack(str, enum.Enum):
     SCIENTIFIC = "scientific"
     LITERARY = "literary"
@@ -18,7 +19,7 @@ class StudentLevel(str, enum.Enum):
     C1 = "C1"
     C2 = "C2"
 
-# ---------- النموذج الرئيسي ----------
+# --- النموذج الرئيسي ---
 class Student(Base):
     __tablename__ = "students"
 
@@ -26,12 +27,18 @@ class Student(Base):
     name = Column(String(255), nullable=False)
     phone = Column(String(20), unique=True, nullable=False)
     telegram_id = Column(String(20), nullable=True, unique=True)
-    
+
+    # ✅ إضافة المفتاح الخارجي للمجموعة
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
+
     track = Column(SQLEnum(StudentTrack), nullable=True)
     level = Column(SQLEnum(StudentLevel), default=StudentLevel.UNKNOWN)
-    
+
     # TODO: سيتم نقل weak_topics إلى جدول مستقل لاحقاً
     weak_topics = Column(String, nullable=True)
-    
+
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # ✅ العلاقة مع المجموعة
+    group = relationship("Group", back_populates="students")
