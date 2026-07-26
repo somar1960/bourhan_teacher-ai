@@ -1,10 +1,9 @@
-import asyncio
+import os
 import logging
 from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
 from sqlalchemy import text
 from telegram import Update
-from telegram.ext import ContextTypes, Application
 
 from app.config import settings
 from app.database import async_session
@@ -20,9 +19,15 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# متغيرات للتحكم
-ADMIN_WEBHOOK_URL = f"{settings.WEBHOOK_BASE_URL}/webhook/admin"
-STUDENT_WEBHOOK_URL = f"{settings.WEBHOOK_BASE_URL}/webhook/student"
+# الحصول على الرابط الأساسي من متغيرات البيئة في Render
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+if not BASE_URL:
+    # إذا لم يكن متاحاً (مثلاً في البيئة المحلية)، استخدم رابطاً افتراضياً
+    BASE_URL = "https://bourhan-teacher-ai.onrender.com"
+    logger.warning(f"⚠️ RENDER_EXTERNAL_URL غير موجود، استخدم الرابط الافتراضي: {BASE_URL}")
+
+ADMIN_WEBHOOK_URL = f"{BASE_URL}/webhook/admin"
+STUDENT_WEBHOOK_URL = f"{BASE_URL}/webhook/student"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,14 +68,11 @@ app = FastAPI(
 # ---------- نقاط نهاية Webhooks ----------
 @app.post("/webhook/admin")
 async def admin_webhook(request: Request):
-    """استقبال تحديثات بوت الأستاذ عبر Webhook"""
     if not admin_bot:
         return Response(status_code=404)
-    
     try:
         data = await request.json()
         update = Update.de_json(data, admin_bot.bot)
-        # معالجة التحديث عبر Application (يستخدم الـ handlers المسجلة)
         await admin_bot.process_update(update)
         return Response(status_code=200)
     except Exception as e:
@@ -79,10 +81,8 @@ async def admin_webhook(request: Request):
 
 @app.post("/webhook/student")
 async def student_webhook(request: Request):
-    """استقبال تحديثات بوت الطالب عبر Webhook"""
     if not student_bot:
         return Response(status_code=404)
-    
     try:
         data = await request.json()
         update = Update.de_json(data, student_bot.bot)
