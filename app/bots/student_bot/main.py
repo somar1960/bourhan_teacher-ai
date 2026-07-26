@@ -39,22 +39,26 @@ PHONE_STATE = 1
 
 # ---------- عرض القائمة حسب المسار ----------
 async def show_main_menu(message, student):
+    # ✅ القائمة المختصرة لمستخدمي المحادثات
     if student.track == StudentTrack.CONVERSATION:
         keyboard = [
-            [InlineKeyboardButton("💬 المحادثات الذكية", callback_data="ai_chat")],
+            [InlineKeyboardButton("🧠 المعلم الذكي", callback_data="ai_chat")],
             [InlineKeyboardButton("📚 ملفاتي", callback_data="my_files")],
             [InlineKeyboardButton("⚙️ حسابي", callback_data="profile")],
         ]
         text = "🌐 **وضع المحادثات العامة**\nاسألني أي شيء عن اللغة الإنجليزية!"
     else:
+        # ✅ القائمة الكاملة لطلاب المدارس (علمي/أدبي)
         track_name = TRACK_DISPLAY_NAMES.get(student.track, "علمي")
         keyboard = [
             [InlineKeyboardButton("📚 ملفاتي", callback_data="my_files")],
             [InlineKeyboardButton("📝 واجباتي", callback_data="homework")],
+            [InlineKeyboardButton("📅 مواعيدي", callback_data="schedule")],
             [InlineKeyboardButton("📢 الإعلانات", callback_data="announcements")],
             [InlineKeyboardButton("📊 علاماتي", callback_data="grades")],
             [InlineKeyboardButton("📈 مستواي", callback_data="level")],
-            [InlineKeyboardButton("💬 المعلم الذكي", callback_data="ai_chat")],
+            [InlineKeyboardButton("🎓 خطة اليوم", callback_data="daily_plan")],
+            [InlineKeyboardButton("🧠 المعلم الذكي", callback_data="ai_chat")],
             [InlineKeyboardButton("⚙️ حسابي", callback_data="profile")],
         ]
         text = f"🎓 **المسار: {track_name}**\nاختر من القائمة:"
@@ -73,6 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(update.message, student)
             return ConversationHandler.END
 
+    # إذا لم يكن مسجلاً، اعرض أزرار اختيار المسار
     keyboard = [
         [InlineKeyboardButton("🧪 علمي (منهج)", callback_data="track_scientific")],
         [InlineKeyboardButton("📖 أدبي (منهج)", callback_data="track_literary")],
@@ -179,24 +184,32 @@ async def ai_chat_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['ai_mode'] = False
     await update.message.reply_text("👋 تم الخروج من المعلم الذكي. استخدم /start للرجوع للقائمة.")
 
-# ---------- معالج الأزرار العامة ----------
+# ---------- معالج الأزرار ----------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
+    # إذا كان الزر هو "المعلم الذكي"
     if data == "ai_chat":
         await ai_chat_start(update, context)
-    else:
-        responses = {
-            "my_files": "📚 ملفاتك: (سيتم إضافتها قريباً)",
-            "homework": "📝 واجباتك: (سيتم إضافتها قريباً)",
-            "announcements": "📢 الإعلانات: (سيتم إضافتها قريباً)",
-            "grades": "📊 علاماتك: (سيتم إضافتها قريباً)",
-            "level": "📈 مستواك: (سيتم إضافته قريباً)",
-            "profile": "👤 حسابك: (سيتم إضافته قريباً)",
-        }
-        await query.edit_message_text(responses.get(data, "❌ خيار غير معروف"))
+        return
+
+    # رسائل مؤقتة لباقي الأزرار
+    responses = {
+        "my_files": "📚 **ملفاتي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "homework": "📝 **واجباتي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "schedule": "📅 **مواعيدي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "announcements": "📢 **الإعلانات**\n(سيتم إضافة هذه الميزة قريباً)",
+        "grades": "📊 **علاماتي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "level": "📈 **مستواي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "daily_plan": "🎓 **خطة اليوم**\n(سيتم إضافة هذه الميزة قريباً)",
+        "profile": "👤 **حسابي**\n(سيتم إضافة هذه الميزة قريباً)",
+    }
+    await query.edit_message_text(
+        responses.get(data, "❌ خيار غير معروف"),
+        parse_mode="Markdown"
+    )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ تم الإلغاء.")
@@ -217,4 +230,4 @@ student_bot.add_handler(CallbackQueryHandler(button_callback, pattern="^(?!track
 student_bot.add_handler(CommandHandler("exit_ai", ai_chat_exit))
 student_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_handle))
 
-logger.info("✅ Student bot with track selection and proxy support ready!")
+logger.info("✅ Student bot with full menu ready!")
