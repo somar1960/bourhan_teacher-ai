@@ -19,21 +19,19 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# الحصول على الرابط الأساسي من متغيرات البيئة في Render
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
-if not BASE_URL:
-    # إذا لم يكن متاحاً (مثلاً في البيئة المحلية)، استخدم رابطاً افتراضياً
-    BASE_URL = "https://bourhan-teacher-ai.onrender.com"
-    logger.warning(f"⚠️ RENDER_EXTERNAL_URL غير موجود، استخدم الرابط الافتراضي: {BASE_URL}")
-
+# الحصول على الرابط الأساسي
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://bourhan-teacher-ai.onrender.com")
 ADMIN_WEBHOOK_URL = f"{BASE_URL}/webhook/admin"
 STUDENT_WEBHOOK_URL = f"{BASE_URL}/webhook/student"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # بدء التشغيل: تهيئة البوتات وتعيين Webhooks
+    """تشغيل البوتات عند بدء التطبيق"""
+    # تهيئة البوتات وتعيين Webhooks
     if admin_bot:
         await admin_bot.initialize()
+        # تأكد من أن البوت بدأ
+        await admin_bot.start()
         await admin_bot.bot.set_webhook(
             url=ADMIN_WEBHOOK_URL,
             drop_pending_updates=True
@@ -42,6 +40,7 @@ async def lifespan(app: FastAPI):
 
     if student_bot:
         await student_bot.initialize()
+        await student_bot.start()
         await student_bot.bot.set_webhook(
             url=STUDENT_WEBHOOK_URL,
             drop_pending_updates=True
@@ -50,7 +49,7 @@ async def lifespan(app: FastAPI):
 
     yield  # التطبيق يعمل هنا
 
-    # الإغلاق: حذف Webhooks وإيقاف البوتات
+    # إيقاف البوتات وحذف Webhooks عند الإغلاق
     if admin_bot:
         await admin_bot.bot.delete_webhook()
         await admin_bot.stop()
@@ -68,29 +67,54 @@ app = FastAPI(
 # ---------- نقاط نهاية Webhooks ----------
 @app.post("/webhook/admin")
 async def admin_webhook(request: Request):
+    """استقبال تحديثات بوت الأستاذ"""
     if not admin_bot:
         return Response(status_code=404)
+    
     try:
+        # قراءة البيانات من الطلب
         data = await request.json()
+        logger.info(f"📩 Admin webhook received: {data}")  # سجل البيانات
+        
+        # تحويل البيانات إلى كائن Update
         update = Update.de_json(data, admin_bot.bot)
+        
+        # معالجة التحديث (هنا يتم استدعاء الـ handlers)
         await admin_bot.process_update(update)
+        
         return Response(status_code=200)
     except Exception as e:
-        logger.exception(f"Admin webhook error: {e}")
+        logger.exception(f"❌ Admin webhook error: {e}")
         return Response(status_code=500)
 
 @app.post("/webhook/student")
 async def student_webhook(request: Request):
+    """استقبال تحديثات بوت الطالب"""
     if not student_bot:
         return Response(status_code=404)
+    
     try:
         data = await request.json()
+        logger.info(f"📩 Student webhook received: {data}")
+        
         update = Update.de_json(data, student_bot.bot)
         await student_bot.process_update(update)
+        
         return Response(status_code=200)
     except Exception as e:
-        logger.exception(f"Student webhook error: {e}")
+        logger.exception(f"❌ Student webhook error: {e}")
         return Response(status_code=500)
+
+# ---------- نقاط نهاية للاختبار ----------
+@app.get("/webhook/admin")
+async def admin_webhook_get():
+    """اختبار مسار Webhook (GET)"""
+    return {"status": "ok", "message": "Admin webhook is active"}
+
+@app.get("/webhook/student")
+async def student_webhook_get():
+    """اختبار مسار Webhook (GET)"""
+    return {"status": "ok", "message": "Student webhook is active"}
 
 # ---------- نقاط نهاية المراقبة ----------
 @app.get("/")
