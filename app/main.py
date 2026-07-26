@@ -1,5 +1,4 @@
 import asyncio
-import threading
 import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -19,50 +18,44 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- دوال تشغيل البوتات في خيوط منفصلة مع تنظيف ----------
-def run_bot_in_thread(bot, bot_name: str):
-    """تشغيل البوت في خيط منفصل مع حلقة أحداث مستقلة"""
-    def start_bot():
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # ⭐ تنظيف الـ webhook لتجنب Conflict
-            async def cleanup_and_run():
-                try:
-                    # حذف الـ webhook القديم وإسقاط التحديثات المعلقة
-                    await bot.bot.delete_webhook(drop_pending_updates=True)
-                    # مهلة صغيرة لتتلاشى الجلسات القديمة
-                    await asyncio.sleep(0.5)
-                    # تشغيل Polling
-                    await bot.run_polling(stop_signals=None)
-                except Exception as e:
-                    logger.exception(f"❌ خطأ أثناء تشغيل {bot_name}: {e}")
-            
-            loop.run_until_complete(cleanup_and_run())
-        except Exception as e:
-            logger.exception(f"❌ {bot_name} error: {e}")
-        finally:
-            loop.close()
-    
-    thread = threading.Thread(target=start_bot, daemon=True)
-    thread.start()
-    logger.info(f"🚀 {bot_name} started in background thread")
+# تخزين مهام البوتات
+bot_tasks = []
+
+async def run_bot_polling(bot, bot_name: str):
+    """تشغيل البوت في نفس حلقة الأحداث"""
+    try:
+        logger.info(f"🚀 Starting {bot_name}...")
+        # تهيئة البوت وبدء التشغيل بدون run_polling التقليدي
+        await bot.initialize()
+        await bot.start()
+        # الانتظار حتى يتم إيقاف البوت
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        logger.info(f"⏹️ {bot_name} stopped gracefully")
+        await bot.stop()
+    except Exception as e:
+        logger.exception(f"❌ {bot_name} error: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # بدء البوتات
+    # بدء تشغيل البوتات كمهام داخل نفس الحلقة
     if admin_bot:
-        run_bot_in_thread(admin_bot, "Admin Bot")
+        task = asyncio.create_task(run_bot_polling(admin_bot, "Admin Bot"))
+        bot_tasks.append(task)
     if student_bot:
-        run_bot_in_thread(student_bot, "Student Bot")
-    
-    yield  # التطبيق يعمل هنا
-    
-    # عند الإغلاق، الخيوط daemon ستنتهي تلقائياً
-    logger.info("🛑 Application shutting down...")
+        task = asyncio.create_task(run_bot_polling(student_bot, "Student Bot"))
+        bot_tasks.append(task)
 
-# ---------- تطبيق FastAPI ----------
+    yield  # هنا يعمل التطبيق
+
+    # إيقاف البوتات بشكل آمن
+    logger.info("🛑 Shutting down bots...")
+    for task in bot_tasks:
+        task.cancel()
+    await asyncio.gather(*bot_tasks, return_exceptions=True)
+    logger.info("✅ Bots stopped")
+
 app = FastAPI(
     title="Bourhan Teacher AI",
     description="AI Educational Platform for Teachers and Students",
