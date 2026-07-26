@@ -19,16 +19,27 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- دوال تشغيل البوتات في خيوط منفصلة ----------
+# ---------- دوال تشغيل البوتات في خيوط منفصلة مع تنظيف ----------
 def run_bot_in_thread(bot, bot_name: str):
     """تشغيل البوت في خيط منفصل مع حلقة أحداث مستقلة"""
     def start_bot():
         try:
-            # إنشاء حلقة أحداث جديدة لهذا الخيط
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            # تشغيل البوت مع تعطيل إشارات النظام
-            loop.run_until_complete(bot.run_polling(stop_signals=None))
+            
+            # ⭐ تنظيف الـ webhook لتجنب Conflict
+            async def cleanup_and_run():
+                try:
+                    # حذف الـ webhook القديم وإسقاط التحديثات المعلقة
+                    await bot.bot.delete_webhook(drop_pending_updates=True)
+                    # مهلة صغيرة لتتلاشى الجلسات القديمة
+                    await asyncio.sleep(0.5)
+                    # تشغيل Polling
+                    await bot.run_polling(stop_signals=None)
+                except Exception as e:
+                    logger.exception(f"❌ خطأ أثناء تشغيل {bot_name}: {e}")
+            
+            loop.run_until_complete(cleanup_and_run())
         except Exception as e:
             logger.exception(f"❌ {bot_name} error: {e}")
         finally:
