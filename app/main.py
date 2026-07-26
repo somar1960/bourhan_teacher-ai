@@ -1,5 +1,4 @@
 import asyncio
-import threading
 import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -19,38 +18,40 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- دوال لتشغيل البوتات في خيوط منفصلة ----------
-def run_bot_in_thread(bot, bot_name: str):
-    """تشغيل بوت في حلقة asyncio منفصلة داخل خيط جديد"""
-    def start_bot():
-        try:
-            # إنشاء حلقة أحداث جديدة لهذا الخيط
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            # تشغيل البوت مع إيقاف إشارات النظام (لتجنب التعارض مع FastAPI)
-            loop.run_until_complete(bot.run_polling())
-        except Exception as e:
-            logger.exception(f"خطأ في تشغيل {bot_name}: {e}")
-    
-    thread = threading.Thread(target=start_bot, daemon=True)
-    thread.start()
-    logger.info(f"✅ {bot_name} started in background thread")
+# متغير لتخزين مهام البوتات
+bot_tasks = []
 
-# ---------- دورة حياة التطبيق ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: تشغيل البوتات في خيوط منفصلة
+    # بدء تشغيل البوتات كـ Tasks داخل نفس Event Loop
     if admin_bot:
-        run_bot_in_thread(admin_bot, "Admin Bot")
+        task = asyncio.create_task(run_bot_polling(admin_bot, "Admin Bot"))
+        bot_tasks.append(task)
     if student_bot:
-        run_bot_in_thread(student_bot, "Student Bot")
-    
-    yield  # التطبيق يعمل هنا
-    
-    # Shutdown: لا حاجة لإيقاف البوتات لأنها تشغل في خيوط daemon
-    logger.info("🛑 Application shutting down...")
+        task = asyncio.create_task(run_bot_polling(student_bot, "Student Bot"))
+        bot_tasks.append(task)
 
-# ---------- إنشاء تطبيق FastAPI ----------
+    yield  # هنا يعمل التطبيق
+
+    # إيقاف البوتات بشكل آمن
+    logger.info("🛑 Shutting down bots...")
+    for task in bot_tasks:
+        task.cancel()
+    await asyncio.gather(*bot_tasks, return_exceptions=True)
+    logger.info("✅ Bots stopped")
+
+async def run_bot_polling(bot, bot_name: str):
+    """تشغيل البوت مع منع معالجة الإشارات"""
+    try:
+        logger.info(f"🚀 Starting {bot_name}...")
+        # منع محاولة إضافة Signal Handlers في الخيط الرئيسي
+        await bot.run_polling(stop_signals=None)
+    except asyncio.CancelledError:
+        logger.info(f"⏹️ {bot_name} stopped gracefully")
+    except Exception as e:
+        logger.exception(f"❌ {bot_name} error: {e}")
+
+# إنشاء تطبيق FastAPI
 app = FastAPI(
     title="Bourhan Teacher AI",
     description="AI Educational Platform for Teachers and Students",
