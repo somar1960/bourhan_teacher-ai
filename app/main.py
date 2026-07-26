@@ -1,8 +1,10 @@
 import asyncio
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
 from sqlalchemy import text
+from telegram import Update
+from telegram.ext import ContextTypes, Application
 
 from app.config import settings
 from app.database import async_session
@@ -18,58 +20,85 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# تخزين مهام البوتات
-bot_tasks = []
-
-async def run_bot_polling(bot, bot_name: str):
-    """تشغيل البوت في نفس حلقة الأحداث"""
-    try:
-        logger.info(f"🚀 Starting {bot_name}...")
-        # تهيئة البوت وبدء التشغيل بدون run_polling التقليدي
-        await bot.initialize()
-        await bot.start()
-        # الانتظار حتى يتم إيقاف البوت
-        while True:
-            await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        logger.info(f"⏹️ {bot_name} stopped gracefully")
-        await bot.stop()
-    except Exception as e:
-        logger.exception(f"❌ {bot_name} error: {e}")
+# متغيرات للتحكم
+ADMIN_WEBHOOK_URL = f"{settings.WEBHOOK_BASE_URL}/webhook/admin"
+STUDENT_WEBHOOK_URL = f"{settings.WEBHOOK_BASE_URL}/webhook/student"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # بدء تشغيل البوتات كمهام داخل نفس الحلقة
+    # بدء التشغيل: تهيئة البوتات وتعيين Webhooks
     if admin_bot:
-        task = asyncio.create_task(run_bot_polling(admin_bot, "Admin Bot"))
-        bot_tasks.append(task)
+        await admin_bot.initialize()
+        await admin_bot.bot.set_webhook(
+            url=ADMIN_WEBHOOK_URL,
+            drop_pending_updates=True
+        )
+        logger.info(f"✅ Admin Webhook set to {ADMIN_WEBHOOK_URL}")
+
     if student_bot:
-        task = asyncio.create_task(run_bot_polling(student_bot, "Student Bot"))
-        bot_tasks.append(task)
+        await student_bot.initialize()
+        await student_bot.bot.set_webhook(
+            url=STUDENT_WEBHOOK_URL,
+            drop_pending_updates=True
+        )
+        logger.info(f"✅ Student Webhook set to {STUDENT_WEBHOOK_URL}")
 
-    yield  # هنا يعمل التطبيق
+    yield  # التطبيق يعمل هنا
 
-    # إيقاف البوتات بشكل آمن
-    logger.info("🛑 Shutting down bots...")
-    for task in bot_tasks:
-        task.cancel()
-    await asyncio.gather(*bot_tasks, return_exceptions=True)
-    logger.info("✅ Bots stopped")
+    # الإغلاق: حذف Webhooks وإيقاف البوتات
+    if admin_bot:
+        await admin_bot.bot.delete_webhook()
+        await admin_bot.stop()
+    if student_bot:
+        await student_bot.bot.delete_webhook()
+        await student_bot.stop()
+    logger.info("🛑 Bots stopped and webhooks deleted")
 
 app = FastAPI(
     title="Bourhan Teacher AI",
-    description="AI Educational Platform for Teachers and Students",
     version="1.0.0",
     lifespan=lifespan
 )
 
+# ---------- نقاط نهاية Webhooks ----------
+@app.post("/webhook/admin")
+async def admin_webhook(request: Request):
+    """استقبال تحديثات بوت الأستاذ عبر Webhook"""
+    if not admin_bot:
+        return Response(status_code=404)
+    
+    try:
+        data = await request.json()
+        update = Update.de_json(data, admin_bot.bot)
+        # معالجة التحديث عبر Application (يستخدم الـ handlers المسجلة)
+        await admin_bot.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.exception(f"Admin webhook error: {e}")
+        return Response(status_code=500)
+
+@app.post("/webhook/student")
+async def student_webhook(request: Request):
+    """استقبال تحديثات بوت الطالب عبر Webhook"""
+    if not student_bot:
+        return Response(status_code=404)
+    
+    try:
+        data = await request.json()
+        update = Update.de_json(data, student_bot.bot)
+        await student_bot.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.exception(f"Student webhook error: {e}")
+        return Response(status_code=500)
+
+# ---------- نقاط نهاية المراقبة ----------
 @app.get("/")
 async def root():
     return {
         "project": "Bourhan Teacher AI",
         "message": "Platform is running 🚀",
         "environment": settings.environment,
-        "timezone": settings.timezone,
         "bots": {
             "admin": "active" if admin_bot else "inactive",
             "student": "active" if student_bot else "inactive"
