@@ -1,10 +1,10 @@
+import os
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 from alembic import context
 import sys
-import os
 
+# عشان يعرف يقرأ ملفات المشروع
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from app.database import Base
@@ -12,6 +12,18 @@ from app.models.student import Student
 from app.models.group import Group
 
 config = context.config
+
+# ------------------------------------------------
+# 🧠 الحل السحري: تحويل الرابط تلقائياً من asyncpg إلى العادي
+# ------------------------------------------------
+database_url = os.getenv("DATABASE_URL", "")
+if database_url.startswith("postgresql+asyncpg://"):
+    database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
+
+# باقي الكود (تكوين السجلات)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
