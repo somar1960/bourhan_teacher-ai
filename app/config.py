@@ -10,11 +10,14 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # AI (اختياري حالياً)
+    # AI (اختياري)
     openai_api_key: Optional[str] = None
 
-    # Redis (اختياري حالياً)
+    # Redis (اختياري)
     redis_url: Optional[str] = None
+
+    # Proxy (اختياري) - أضف هذا السطر
+    telegram_proxy: Optional[str] = None
 
     # App
     environment: str = "development"
