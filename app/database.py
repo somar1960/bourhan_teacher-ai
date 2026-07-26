@@ -3,12 +3,10 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
 
-
 engine = create_async_engine(
     settings.database_url,
     echo=False
 )
-
 
 async_session = sessionmaker(
     engine,
@@ -16,10 +14,8 @@ async_session = sessionmaker(
     expire_on_commit=False
 )
 
-
 class Base(DeclarativeBase):
     pass
-
 
 async def get_db():
     async with async_session() as session:
