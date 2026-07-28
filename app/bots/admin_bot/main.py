@@ -14,7 +14,7 @@ TOKEN = settings.admin_bot_token
 if not TOKEN:
     raise ValueError("admin_bot_token غير موجود!")
 
-# ✅ فقط بناء التطبيق (بدون تشغيل)
+# بناء التطبيق (بدون تشغيل)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
@@ -61,7 +61,8 @@ async def show_students(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             reply = "👨‍🎓 **قائمة الطلاب:**\n\n"
             for s in students:
-                reply += f"• {s.name} - 📞 {s.phone}\n"
+                status = "✅ مفعل" if s.is_approved else "⏳ قيد المراجعة"
+                reply += f"• {s.name} - 📞 {s.phone} - {status}\n"
             await update.message.reply_text(reply, parse_mode="Markdown")
         except Exception as e:
             logger.exception(f"خطأ في جلب الطلاب: {e}")
@@ -70,12 +71,88 @@ async def show_students(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def add_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_owner(update):
         return
-    await update.message.reply_text(
-        "➕ لإضافة طالب، استخدم الأمر:\n"
-        "/add_student الاسم رقم_الهاتف\n"
-        "مثال: /add_student أحمد 0999123456"
-    )
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "➕ لإضافة طالب، استخدم الأمر:\n"
+            "/add_student الاسم رقم_الهاتف\n"
+            "مثال: /add_student أحمد 0999123456"
+        )
+        return
+    
+    name = args[0]
+    phone = args[1]
+    
+    async with async_session() as session:
+        # التحقق من عدم وجود الرقم
+        result = await session.execute(
+            select(Student).where(Student.phone == phone)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            await update.message.reply_text("⚠️ هذا الرقم مسجل بالفعل.")
+            return
+        
+        new_student = Student(
+            name=name,
+            phone=phone,
+            is_approved=True  # عند الإضافة اليدوية، يُفعل فوراً
+        )
+        session.add(new_student)
+        await session.commit()
+        await update.message.reply_text(f"✅ تم إضافة الطالب {name} بنجاح!")
 
+# ---------- معالج طلبات التسجيل ----------
+async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة قبول أو رفض الطالب"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    student_id = int(data.split('_')[1])
+    action = data.split('_')[0]
+    
+    async with async_session() as session:
+        result = await session.execute(
+            select(Student).where(Student.id == student_id)
+        )
+        student = result.scalar_one_or_none()
+        if not student:
+            await query.message.reply_text("❌ الطالب غير موجود.")
+            return
+        
+        if action == "approve":
+            student.is_approved = True
+            await session.commit()
+            await query.message.reply_text(f"✅ تم قبول الطالب {student.name}!")
+            
+            # إرسال رسالة للطالب
+            app = Application.builder().token(settings.student_bot_token).build()
+            await app.initialize()
+            await app.bot.send_message(
+                chat_id=int(student.telegram_id),
+                text="🎉 **تم قبول طلبك!**\nيمكنك الآن استخدام البوت بالكامل. أرسل /start للبدء."
+            )
+            await app.shutdown()
+            
+        else:  # reject
+            await session.delete(student)
+            await session.commit()
+            await query.message.reply_text(f"❌ تم رفض الطالب {student.name}.")
+            
+            # إرسال رسالة للطالب
+            app = Application.builder().token(settings.student_bot_token).build()
+            await app.initialize()
+            await app.bot.send_message(
+                chat_id=int(student.telegram_id),
+                text="❌ **للأسف، تم رفض طلبك.** يرجى التواصل مع الأستاذ للاستفسار."
+            )
+            await app.shutdown()
+    
+    # حذف الأزرار من رسالة الأستاذ
+    await query.edit_message_reply_markup(reply_markup=None)
+
+# ---------- دوال مؤقتة لباقي الأزرار ----------
 async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👥 **المجموعات**\n(سيتم إضافة هذه الميزة قريباً)")
 
@@ -119,7 +196,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             reply = "👨‍🎓 **الطلاب:**\n"
             for s in students:
-                reply += f"• {s.name} - {s.phone}\n"
+                status = "✅ مفعل" if s.is_approved else "⏳ قيد المراجعة"
+                reply += f"• {s.name} - {s.phone} - {status}\n"
             await query.message.reply_text(reply, parse_mode="Markdown")
     else:
         responses = {
@@ -134,7 +212,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await query.message.reply_text(responses.get(data, "❌ خيار غير معروف"))
 
-# ---------- تسجيل المعالجات (فقط) ----------
+# ---------- تسجيل المعالجات ----------
 admin_bot.add_handler(CommandHandler("start", start))
 admin_bot.add_handler(CommandHandler("students", show_students))
 admin_bot.add_handler(CommandHandler("add_student", add_student))
@@ -147,5 +225,6 @@ admin_bot.add_handler(CommandHandler("statistics", statistics))
 admin_bot.add_handler(CommandHandler("train_ai", train_ai))
 admin_bot.add_handler(CommandHandler("settings", settings_command))
 admin_bot.add_handler(CallbackQueryHandler(button_callback))
+admin_bot.add_handler(CallbackQueryHandler(handle_approval, pattern="^(approve|reject)_"))
 
-logger.info("✅ Admin bot handlers registered!")
+logger.info("✅ Admin bot with approval handler ready!")
