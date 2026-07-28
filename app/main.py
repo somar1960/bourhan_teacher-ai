@@ -1,95 +1,87 @@
-import asyncio
+import os
 import logging
+from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
 from sqlalchemy import text
+from telegram import Update
 
 from app.config import settings
-from app.database import async_session, create_tables
+from app.database import async_session
 
-try:
-    from app.bots.admin_bot.main import admin_bot
-    from app.bots.student_bot.main import student_bot
-except Exception:
-    logging.exception("خطأ في تحميل البوتات")
-    admin_bot = None
-    student_bot = None
+# استيراد كائنات البوت (التي تحتوي فقط على Handlers)
+from app.bots.admin_bot.main import admin_bot
+from app.bots.student_bot.main import student_bot
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-async def run_bot_in_thread(bot, bot_name: str):
-    """تشغيل البوت في خيط منفصل"""
-
-    def start_bot():
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            # حذف أي Webhook قديم
-            loop.run_until_complete(
-                bot.bot.delete_webhook(drop_pending_updates=True)
-            )
-
-            # تشغيل البوت بطريقة Polling
-            loop.run_until_complete(
-                bot.run_polling(stop_signals=None)
-            )
-
-        except Exception as e:
-            logger.exception(f"❌ {bot_name} error: {e}")
-
-        finally:
-            loop.close()
-
-    await asyncio.to_thread(start_bot)
-
+# رابط الخدمة الأساسي (يوفره Render تلقائياً)
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://bourhan-teacher-ai.onrender.com")
+ADMIN_WEBHOOK_URL = f"{BASE_URL}/webhook/admin"
+STUDENT_WEBHOOK_URL = f"{BASE_URL}/webhook/student"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """عند بدء التطبيق: تهيئة البوتات وتعيين Webhooks"""
+    # تهيئة البوتات (تحضيرها للعمل)
+    await admin_bot.initialize()
+    await student_bot.initialize()
 
-    # ✅ إنشاء جميع الجداول إذا لم تكن موجودة
-    try:
-        await create_tables()
-        logger.info("✅ Database tables checked")
-    except Exception as e:
-        logger.exception(f"❌ Database initialization failed: {e}")
+    # تعيين Webhooks (إخبار تلغرام أين يرسل التحديثات)
+    await admin_bot.bot.set_webhook(
+        url=ADMIN_WEBHOOK_URL,
+        drop_pending_updates=True
+    )
+    logger.info(f"✅ Admin Webhook set to {ADMIN_WEBHOOK_URL}")
 
-    tasks = []
+    await student_bot.bot.set_webhook(
+        url=STUDENT_WEBHOOK_URL,
+        drop_pending_updates=True
+    )
+    logger.info(f"✅ Student Webhook set to {STUDENT_WEBHOOK_URL}")
 
-    if admin_bot:
-        task = asyncio.create_task(
-            run_bot_in_thread(admin_bot, "Admin Bot")
-        )
-        tasks.append(task)
-        logger.info("🚀 Admin Bot started")
+    yield  # التطبيق يعمل هنا
 
-    if student_bot:
-        task = asyncio.create_task(
-            run_bot_in_thread(student_bot, "Student Bot")
-        )
-        tasks.append(task)
-        logger.info("🚀 Student Bot started")
+    # عند الإغلاق: حذف Webhooks وتنظيف البوتات
+    await admin_bot.bot.delete_webhook()
+    await student_bot.bot.delete_webhook()
+    await admin_bot.stop()
+    await student_bot.stop()
+    logger.info("🛑 Bots stopped and webhooks deleted")
 
-    yield
-
-    for task in tasks:
-        task.cancel()
-
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-    logger.info("🛑 Bots stopped")
-
-
+# إنشاء تطبيق FastAPI
 app = FastAPI(
     title="Bourhan Teacher AI",
     version="1.0.0",
-    lifespan=lifespan,
+    lifespan=lifespan
 )
 
+# ---------- نقاط نهاية Webhooks ----------
+@app.post("/webhook/admin")
+async def admin_webhook(request: Request):
+    """نقطة نهاية تستقبل تحديثات بوت الأستاذ من تلغرام"""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, admin_bot.bot)
+        await admin_bot.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.exception(f"Admin webhook error: {e}")
+        return Response(status_code=500)
 
+@app.post("/webhook/student")
+async def student_webhook(request: Request):
+    """نقطة نهاية تستقبل تحديثات بوت الطالب من تلغرام"""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, student_bot.bot)
+        await student_bot.process_update(update)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.exception(f"Student webhook error: {e}")
+        return Response(status_code=500)
+
+# ---------- نقاط نهاية المراقبة ----------
 @app.get("/")
 async def root():
     return {
@@ -97,29 +89,21 @@ async def root():
         "message": "Platform is running 🚀",
         "environment": settings.environment,
         "bots": {
-            "admin": "active" if admin_bot else "inactive",
-            "student": "active" if student_bot else "inactive",
-        },
+            "admin": "active",
+            "student": "active"
+        }
     }
-
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
 
 @app.get("/health/db")
 async def health_db():
     try:
         async with async_session() as session:
             await session.execute(text("SELECT 1"))
-
         return {"status": "db_ok"}
-
     except Exception as e:
         logger.exception("Database health check failed")
-
-        return {
-            "status": "db_error",
-            "detail": str(e),
-        }
+        return {"status": "db_error", "detail": str(e)}
