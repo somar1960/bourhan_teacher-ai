@@ -27,8 +27,8 @@ async def run_bot_in_thread(bot, bot_name: str):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # ✅ حذف أي ويب هوك معلق لتجنب تعارض Conflict
-            loop.run_until_complete(bot.delete_webhook())
+            # ✅ حذف أي ويب هوك معلق بشكل صحيح (من خلال bot.bot)
+            loop.run_until_complete(bot.bot.delete_webhook(drop_pending_updates=True))
             
             # تشغيل البوت مع تعطيل إشارات النظام
             loop.run_until_complete(bot.run_polling(stop_signals=None))
