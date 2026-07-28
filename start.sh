@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echo "🔄 Creating migration files..."
+python -m alembic revision --autogenerate -m "Initial migration"
+
 echo "🔄 Running database migrations..."
 python -m alembic upgrade head
 
