@@ -14,7 +14,7 @@ TOKEN = settings.admin_bot_token
 if not TOKEN:
     raise ValueError("admin_bot_token غير موجود!")
 
-# بناء البوت مع دعم الوكيل (اختياري)
+# ✅ فقط بناء التطبيق (بدون تشغيل)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
@@ -76,7 +76,6 @@ async def add_student(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "مثال: /add_student أحمد 0999123456"
     )
 
-# ---------- دوال مؤقتة لباقي الأزرار ----------
 async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👥 **المجموعات**\n(سيتم إضافة هذه الميزة قريباً)")
 
@@ -135,7 +134,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await query.message.reply_text(responses.get(data, "❌ خيار غير معروف"))
 
-# ---------- تسجيل الأوامر ----------
+# ---------- تسجيل المعالجات (فقط) ----------
 admin_bot.add_handler(CommandHandler("start", start))
 admin_bot.add_handler(CommandHandler("students", show_students))
 admin_bot.add_handler(CommandHandler("add_student", add_student))
@@ -149,4 +148,4 @@ admin_bot.add_handler(CommandHandler("train_ai", train_ai))
 admin_bot.add_handler(CommandHandler("settings", settings_command))
 admin_bot.add_handler(CallbackQueryHandler(button_callback))
 
-logger.info("✅ Admin bot with full menu ready!")
+logger.info("✅ Admin bot handlers registered!")
