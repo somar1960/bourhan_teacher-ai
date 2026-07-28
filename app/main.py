@@ -1,9 +1,8 @@
-import os
+import asyncio
 import logging
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from sqlalchemy import text
-from telegram import Update
 
 from app.config import settings
 from app.database import async_session
@@ -19,104 +18,39 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# الحصول على الرابط الأساسي
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "https://bourhan-teacher-ai.onrender.com")
-ADMIN_WEBHOOK_URL = f"{BASE_URL}/webhook/admin"
-STUDENT_WEBHOOK_URL = f"{BASE_URL}/webhook/student"
+# متغير لتخزين مهام البوتات
+bot_tasks = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """تشغيل البوتات عند بدء التطبيق"""
-    # تهيئة البوتات وتعيين Webhooks
+    """تشغيل البوتات باستخدام Polling في نفس حلقة الأحداث"""
+    # بدء تشغيل البوتات كمهام خلفية
     if admin_bot:
-        await admin_bot.initialize()
-        # تأكد من أن البوت بدأ
-        await admin_bot.start()
-        await admin_bot.bot.set_webhook(
-            url=ADMIN_WEBHOOK_URL,
-            drop_pending_updates=True
-        )
-        logger.info(f"✅ Admin Webhook set to {ADMIN_WEBHOOK_URL}")
-
+        task = asyncio.create_task(admin_bot.run_polling())
+        bot_tasks.append(task)
+        logger.info("✅ Admin Bot started (Polling)")
+    
     if student_bot:
-        await student_bot.initialize()
-        await student_bot.start()
-        await student_bot.bot.set_webhook(
-            url=STUDENT_WEBHOOK_URL,
-            drop_pending_updates=True
-        )
-        logger.info(f"✅ Student Webhook set to {STUDENT_WEBHOOK_URL}")
-
+        task = asyncio.create_task(student_bot.run_polling())
+        bot_tasks.append(task)
+        logger.info("✅ Student Bot started (Polling)")
+    
     yield  # التطبيق يعمل هنا
+    
+    # إيقاف البوتات بشكل آمن
+    logger.info("🛑 Shutting down bots...")
+    for task in bot_tasks:
+        task.cancel()
+    await asyncio.gather(*bot_tasks, return_exceptions=True)
+    logger.info("✅ Bots stopped")
 
-    # إيقاف البوتات وحذف Webhooks عند الإغلاق
-    if admin_bot:
-        await admin_bot.bot.delete_webhook()
-        await admin_bot.stop()
-    if student_bot:
-        await student_bot.bot.delete_webhook()
-        await student_bot.stop()
-    logger.info("🛑 Bots stopped and webhooks deleted")
-
+# إنشاء تطبيق FastAPI (فقط لـ Health Check)
 app = FastAPI(
     title="Bourhan Teacher AI",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# ---------- نقاط نهاية Webhooks ----------
-@app.post("/webhook/admin")
-async def admin_webhook(request: Request):
-    """استقبال تحديثات بوت الأستاذ"""
-    if not admin_bot:
-        return Response(status_code=404)
-    
-    try:
-        # قراءة البيانات من الطلب
-        data = await request.json()
-        logger.info(f"📩 Admin webhook received: {data}")  # سجل البيانات
-        
-        # تحويل البيانات إلى كائن Update
-        update = Update.de_json(data, admin_bot.bot)
-        
-        # معالجة التحديث (هنا يتم استدعاء الـ handlers)
-        await admin_bot.process_update(update)
-        
-        return Response(status_code=200)
-    except Exception as e:
-        logger.exception(f"❌ Admin webhook error: {e}")
-        return Response(status_code=500)
-
-@app.post("/webhook/student")
-async def student_webhook(request: Request):
-    """استقبال تحديثات بوت الطالب"""
-    if not student_bot:
-        return Response(status_code=404)
-    
-    try:
-        data = await request.json()
-        logger.info(f"📩 Student webhook received: {data}")
-        
-        update = Update.de_json(data, student_bot.bot)
-        await student_bot.process_update(update)
-        
-        return Response(status_code=200)
-    except Exception as e:
-        logger.exception(f"❌ Student webhook error: {e}")
-        return Response(status_code=500)
-
-# ---------- نقاط نهاية للاختبار ----------
-@app.get("/webhook/admin")
-async def admin_webhook_get():
-    """اختبار مسار Webhook (GET)"""
-    return {"status": "ok", "message": "Admin webhook is active"}
-
-@app.get("/webhook/student")
-async def student_webhook_get():
-    """اختبار مسار Webhook (GET)"""
-    return {"status": "ok", "message": "Student webhook is active"}
-
-# ---------- نقاط نهاية المراقبة ----------
 @app.get("/")
 async def root():
     return {
