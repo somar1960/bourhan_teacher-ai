@@ -1,5 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Boolean
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
@@ -27,18 +26,16 @@ class Student(Base):
     name = Column(String(255), nullable=False)
     phone = Column(String(20), unique=True, nullable=False)
     telegram_id = Column(String(20), nullable=True, unique=True)
-
-    # ✅ إضافة المفتاح الخارجي للمجموعة
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
-
+    group_id = Column(Integer, nullable=True)  # ForeignKey لاحقاً
+    
     track = Column(SQLEnum(StudentTrack), nullable=True)
     level = Column(SQLEnum(StudentLevel), default=StudentLevel.UNKNOWN)
-
+    
+    # ✅ الحقل الجديد: هل تم قبول الطالب من قبل الأستاذ؟
+    is_approved = Column(Boolean, default=False)
+    
     # TODO: سيتم نقل weak_topics إلى جدول مستقل لاحقاً
     weak_topics = Column(String, nullable=True)
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    # ✅ العلاقة مع المجموعة
-    group = relationship("Group", back_populates="students")
