@@ -18,7 +18,7 @@ TOKEN = settings.student_bot_token
 if not TOKEN:
     raise ValueError("student_bot_token غير موجود!")
 
-# ---------- بناء البوت مع دعم الوكيل ----------
+# بناء البوت مع دعم الوكيل (اختياري)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
@@ -39,7 +39,6 @@ PHONE_STATE = 1
 
 # ---------- عرض القائمة حسب المسار ----------
 async def show_main_menu(message, student):
-    # ✅ القائمة المختصرة لمستخدمي المحادثات
     if student.track == StudentTrack.CONVERSATION:
         keyboard = [
             [InlineKeyboardButton("🧠 المعلم الذكي", callback_data="ai_chat")],
@@ -48,7 +47,6 @@ async def show_main_menu(message, student):
         ]
         text = "🌐 **وضع المحادثات العامة**\nاسألني أي شيء عن اللغة الإنجليزية!"
     else:
-        # ✅ القائمة الكاملة لطلاب المدارس (علمي/أدبي)
         track_name = TRACK_DISPLAY_NAMES.get(student.track, "علمي")
         keyboard = [
             [InlineKeyboardButton("📚 ملفاتي", callback_data="my_files")],
@@ -77,7 +75,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_main_menu(update.message, student)
             return ConversationHandler.END
 
-    # إذا لم يكن مسجلاً، اعرض أزرار اختيار المسار
     keyboard = [
         [InlineKeyboardButton("🧪 علمي (منهج)", callback_data="track_scientific")],
         [InlineKeyboardButton("📖 أدبي (منهج)", callback_data="track_literary")],
@@ -190,12 +187,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # إذا كان الزر هو "المعلم الذكي"
     if data == "ai_chat":
         await ai_chat_start(update, context)
         return
 
-    # رسائل مؤقتة لباقي الأزرار
     responses = {
         "my_files": "📚 **ملفاتي**\n(سيتم إضافة هذه الميزة قريباً)",
         "homework": "📝 **واجباتي**\n(سيتم إضافة هذه الميزة قريباً)",
