@@ -18,7 +18,7 @@ TOKEN = settings.student_bot_token
 if not TOKEN:
     raise ValueError("student_bot_token غير موجود!")
 
-# بناء البوت مع دعم الوكيل (اختياري)
+# ✅ فقط بناء التطبيق (بدون تشغيل)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
@@ -210,7 +210,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ تم الإلغاء.")
     return ConversationHandler.END
 
-# ---------- تسجيل المعالجات ----------
+# ---------- تسجيل المعالجات (فقط) ----------
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
     states={
@@ -225,4 +225,4 @@ student_bot.add_handler(CallbackQueryHandler(button_callback, pattern="^(?!track
 student_bot.add_handler(CommandHandler("exit_ai", ai_chat_exit))
 student_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_handle))
 
-logger.info("✅ Student bot with full menu ready!")
+logger.info("✅ Student bot handlers registered!")
