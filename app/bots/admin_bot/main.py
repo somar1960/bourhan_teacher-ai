@@ -14,7 +14,7 @@ TOKEN = settings.admin_bot_token
 if not TOKEN:
     raise ValueError("admin_bot_token غير موجود!")
 
-# ---------- بناء البوت مع دعم الوكيل ----------
+# بناء البوت مع دعم الوكيل (اختياري)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
@@ -33,7 +33,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_owner(update):
         return
     
-    # ✅ القائمة الكاملة كما هو مطلوب في المشروع
     keyboard = [
         [InlineKeyboardButton("👨‍🎓 إدارة الطلاب", callback_data="students")],
         [InlineKeyboardButton("👥 المجموعات", callback_data="groups")],
@@ -124,7 +123,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply += f"• {s.name} - {s.phone}\n"
             await query.message.reply_text(reply, parse_mode="Markdown")
     else:
-        # رسائل مؤقتة لباقي الأزرار
         responses = {
             "groups": "👥 المجموعات: قريباً",
             "files": "📚 الملفات: قريباً",
