@@ -9,7 +9,6 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import async_session
 from app.models.student import Student, StudentTrack, StudentLevel
-from app.services.ai_service import get_ai_response
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,27 +17,18 @@ TOKEN = settings.student_bot_token
 if not TOKEN:
     raise ValueError("student_bot_token غير موجود!")
 
-# ✅ فقط بناء التطبيق (بدون تشغيل)
+# بناء التطبيق (بدون تشغيل)
 builder = Application.builder().token(TOKEN)
 if settings.telegram_proxy:
     builder = builder.proxy(settings.telegram_proxy)
 student_bot = builder.build()
 
-# ---------- الثوابت ----------
-TRACK_MAP = {
-    "track_scientific": StudentTrack.SCIENTIFIC,
-    "track_literary": StudentTrack.LITERARY,
-    "track_conversation": StudentTrack.CONVERSATION,
-}
-TRACK_DISPLAY_NAMES = {
-    StudentTrack.SCIENTIFIC: "العلمي",
-    StudentTrack.LITERARY: "الأدبي",
-    StudentTrack.CONVERSATION: "محادثات عامة"
-}
-PHONE_STATE = 1
+# ---------- حالات المحادثة ----------
+NAME_STATE, PHONE_STATE, TRACK_STATE = range(1, 4)
 
-# ---------- عرض القائمة حسب المسار ----------
+# ---------- دوال مساعدة ----------
 async def show_main_menu(message, student):
+    """عرض القائمة حسب المسار"""
     if student.track == StudentTrack.CONVERSATION:
         keyboard = [
             [InlineKeyboardButton("🧠 المعلم الذكي", callback_data="ai_chat")],
@@ -47,7 +37,7 @@ async def show_main_menu(message, student):
         ]
         text = "🌐 **وضع المحادثات العامة**\nاسألني أي شيء عن اللغة الإنجليزية!"
     else:
-        track_name = TRACK_DISPLAY_NAMES.get(student.track, "علمي")
+        track_name = "العلمي" if student.track == StudentTrack.SCIENTIFIC else "الأدبي"
         keyboard = [
             [InlineKeyboardButton("📚 ملفاتي", callback_data="my_files")],
             [InlineKeyboardButton("📝 واجباتي", callback_data="homework")],
@@ -63,6 +53,40 @@ async def show_main_menu(message, student):
     
     await message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+async def notify_admin(student_id: int, name: str, phone: str, track: str):
+    """إرسال طلب التسجيل إلى بوت الأستاذ"""
+    admin_bot_token = settings.admin_bot_token
+    admin_id = settings.owner_telegram_id
+    
+    # إنشاء تطبيق مؤقت لإرسال الرسالة للأستاذ
+    app = Application.builder().token(admin_bot_token).build()
+    await app.initialize()
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ قبول", callback_data=f"approve_{student_id}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{student_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    track_name = "علمي" if track == StudentTrack.SCIENTIFIC else "أدبي" if track == StudentTrack.LITERARY else "محادثات"
+    message = (
+        f"📢 **طلب تسجيل جديد:**\n"
+        f"👤 الاسم: {name}\n"
+        f"📞 الهاتف: {phone}\n"
+        f"📚 المسار: {track_name}\n"
+        f"🆔 ID: {student_id}"
+    )
+    
+    await app.bot.send_message(
+        chat_id=admin_id,
+        text=message,
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+    await app.shutdown()
+
 # ---------- أمر /start ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -71,158 +95,189 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             select(Student).where(Student.telegram_id == str(user_id))
         )
         student = result.scalar_one_or_none()
+        
         if student:
-            await show_main_menu(update.message, student)
-            return ConversationHandler.END
+            if student.is_approved:
+                await show_main_menu(update.message, student)
+                return ConversationHandler.END
+            else:
+                await update.message.reply_text(
+                    "⏳ طلبك لا يزال قيد المراجعة من قبل الأستاذ. يرجى الانتظار."
+                )
+                return ConversationHandler.END
 
-    keyboard = [
-        [InlineKeyboardButton("🧪 علمي (منهج)", callback_data="track_scientific")],
-        [InlineKeyboardButton("📖 أدبي (منهج)", callback_data="track_literary")],
-        [InlineKeyboardButton("💬 محادثات عامة", callback_data="track_conversation")],
-    ]
+    # إذا لم يكن مسجلاً، ابدأ طلب الاسم
     await update.message.reply_text(
-        "🎓 **مرحباً! اختر مسارك في اللغة الإنجليزية:**\n\n"
-        "• **علمي**: دروس مركزة على المصطلحات العلمية.\n"
-        "• **أدبي**: دروس مركزة على القواعد والأدب.\n"
-        "• **محادثات عامة**: تدريب على المحادثة اليومية.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
+        "📝 **مرحباً! يرجى إدخال اسمك الثلاثي (الاسم الكامل):**"
     )
-    return ConversationHandler.END
+    return NAME_STATE
 
-# ---------- حفظ المسار ----------
-async def save_track(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
-    track = TRACK_MAP.get(query.data)
-    if not track:
-        await query.message.reply_text("❌ خيار غير معروف.")
-        return ConversationHandler.END
-
-    context.user_data['temp_track'] = track
-    await query.message.reply_text("📱 يرجى إدخال رقم هاتفك (كما هو مسجل لدى الأستاذ):")
+# ---------- استقبال الاسم ----------
+async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    if len(name) < 3:
+        await update.message.reply_text("⚠️ يرجى إدخال اسم صحيح (ثلاثي على الأقل).")
+        return NAME_STATE
+    context.user_data['temp_name'] = name
+    await update.message.reply_text(
+        "📱 **يرجى إدخال رقم هاتفك السوري (مثال: 0999123456):**"
+    )
     return PHONE_STATE
 
 # ---------- استقبال رقم الهاتف ----------
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
-    user_id = update.effective_user.id
-    track = context.user_data.get('temp_track', StudentTrack.CONVERSATION)
-
+    # تحقق بسيط من الرقم (10 أرقام تبدأ بـ 09)
+    if not (phone.isdigit() and len(phone) == 10 and phone.startswith('09')):
+        await update.message.reply_text(
+            "⚠️ رقم غير صحيح. يرجى إدخال 10 أرقام تبدأ بـ 09 (مثال: 0999123456)."
+        )
+        return PHONE_STATE
+    
+    # التحقق من عدم تكرار الرقم
     async with async_session() as session:
         result = await session.execute(
             select(Student).where(Student.phone == phone)
         )
-        student = result.scalar_one_or_none()
-        if not student:
-            await update.message.reply_text("❌ رقم غير مسجل. تواصل مع الأستاذ.")
+        existing = result.scalar_one_or_none()
+        if existing:
+            await update.message.reply_text(
+                "⚠️ هذا الرقم مسجل بالفعل. يرجى التواصل مع الأستاذ."
+            )
             return PHONE_STATE
-        
-        student.telegram_id = str(user_id)
-        student.track = track
-        if not student.level:
-            student.level = StudentLevel.UNKNOWN
+    
+    context.user_data['temp_phone'] = phone
+    # عرض أزرار اختيار المسار
+    keyboard = [
+        [InlineKeyboardButton("🧪 علمي", callback_data="track_scientific")],
+        [InlineKeyboardButton("📖 أدبي", callback_data="track_literary")],
+        [InlineKeyboardButton("💬 محادثات عامة", callback_data="track_conversation")],
+    ]
+    await update.message.reply_text(
+        "🎓 **اختر مسارك التعليمي:**",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return TRACK_STATE
+
+# ---------- حفظ المسار وإرسال الطلب ----------
+async def save_track_and_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    track_map = {
+        "track_scientific": StudentTrack.SCIENTIFIC,
+        "track_literary": StudentTrack.LITERARY,
+        "track_conversation": StudentTrack.CONVERSATION,
+    }
+    track = track_map.get(query.data)
+    if not track:
+        await query.message.reply_text("❌ خيار غير معروف.")
+        return ConversationHandler.END
+    
+    name = context.user_data.get('temp_name')
+    phone = context.user_data.get('temp_phone')
+    
+    # حفظ الطالب في قاعدة البيانات (غير مفعل حتى قبول الأستاذ)
+    async with async_session() as session:
+        new_student = Student(
+            name=name,
+            phone=phone,
+            telegram_id=str(user_id),
+            track=track,
+            level=StudentLevel.UNKNOWN,
+            is_approved=False
+        )
+        session.add(new_student)
         await session.commit()
-        
-        track_name = TRACK_DISPLAY_NAMES.get(track, "محادثات")
-        await update.message.reply_text(f"✅ تم التسجيل في مسار {track_name}!")
-        await show_main_menu(update.message, student)
-        
+        await session.refresh(new_student)
+        student_id = new_student.id
+    
+    # إرسال طلب إلى الأستاذ
+    await notify_admin(student_id, name, phone, track)
+    
+    await query.message.reply_text(
+        "✅ **تم إرسال طلبك إلى الأستاذ بنجاح!**\n"
+        "سيتم إعلامك عند الموافقة على طلبك."
+    )
     return ConversationHandler.END
 
-# ---------- المعلم الذكي ----------
-async def ai_chat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        message = query.message
-    else:
-        message = update.message
-
-    user_id = update.effective_user.id
-    async with async_session() as session:
-        result = await session.execute(
-            select(Student).where(Student.telegram_id == str(user_id))
-        )
-        student = result.scalar_one_or_none()
-        if not student:
-            await message.reply_text("⚠️ يرجى إعادة تشغيل البوت بـ /start")
-            return
-        context.user_data['student_id'] = student.id
-        context.user_data['ai_mode'] = True
-
-    await message.reply_text(
-        "🧠 **المعلم الذكي جاهز!**\n\n"
-        "اكتب سؤالك عن أي قاعدة، وسأشرحها لك.\n"
-        "لإنهاء المحادثة، اكتب /exit_ai"
-    )
-
-async def ai_chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get('ai_mode', False):
-        return
-    
-    question = update.message.text
-    student_id = context.user_data.get('student_id')
-    if not student_id:
-        await update.message.reply_text("⚠️ يرجى إعادة تشغيل البوت بـ /start")
-        return
-
-    await update.message.reply_text("⏳ جاري التفكير...")
-    try:
-        answer = await get_ai_response(student_id, question)
-        await update.message.reply_text(answer, parse_mode="Markdown")
-    except Exception as e:
-        logger.exception(f"خطأ في الذكاء الاصطناعي: {e}")
-        await update.message.reply_text("❌ حدث خطأ. حاول مجدداً لاحقاً.")
-
-async def ai_chat_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['ai_mode'] = False
-    await update.message.reply_text("👋 تم الخروج من المعلم الذكي. استخدم /start للرجوع للقائمة.")
-
-# ---------- معالج الأزرار ----------
+# ---------- معالج الأزرار العامة ----------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
     if data == "ai_chat":
-        await ai_chat_start(update, context)
+        # بدء المحادثة مع الذكاء الاصطناعي
+        user_id = update.effective_user.id
+        async with async_session() as session:
+            result = await session.execute(
+                select(Student).where(Student.telegram_id == str(user_id))
+            )
+            student = result.scalar_one_or_none()
+            if not student or not student.is_approved:
+                await query.message.reply_text(
+                    "⚠️ حسابك غير مفعل. يرجى الانتظار حتى يوافق الأستاذ."
+                )
+                return
+            context.user_data['student_id'] = student.id
+            context.user_data['ai_mode'] = True
+        await query.message.reply_text(
+            "🧠 **المعلم الذكي جاهز!**\n"
+            "اكتب سؤالك، لإنهاء المحادثة اكتب /exit_ai"
+        )
         return
 
+    # رسائل مؤقتة لباقي الأزرار
     responses = {
-        "my_files": "📚 **ملفاتي**\n(سيتم إضافة هذه الميزة قريباً)",
-        "homework": "📝 **واجباتي**\n(سيتم إضافة هذه الميزة قريباً)",
-        "schedule": "📅 **مواعيدي**\n(سيتم إضافة هذه الميزة قريباً)",
-        "announcements": "📢 **الإعلانات**\n(سيتم إضافة هذه الميزة قريباً)",
-        "grades": "📊 **علاماتي**\n(سيتم إضافة هذه الميزة قريباً)",
-        "level": "📈 **مستواي**\n(سيتم إضافة هذه الميزة قريباً)",
-        "daily_plan": "🎓 **خطة اليوم**\n(سيتم إضافة هذه الميزة قريباً)",
-        "profile": "👤 **حسابي**\n(سيتم إضافة هذه الميزة قريباً)",
+        "my_files": "📚 **ملفاتي** (سيتم إضافتها قريباً)",
+        "homework": "📝 **واجباتي** (سيتم إضافتها قريباً)",
+        "schedule": "📅 **مواعيدي** (سيتم إضافتها قريباً)",
+        "announcements": "📢 **الإعلانات** (سيتم إضافتها قريباً)",
+        "grades": "📊 **علاماتي** (سيتم إضافتها قريباً)",
+        "level": "📈 **مستواي** (سيتم إضافته قريباً)",
+        "daily_plan": "🎓 **خطة اليوم** (سيتم إضافتها قريباً)",
+        "profile": "👤 **حسابي** (سيتم إضافته قريباً)",
     }
     await query.edit_message_text(
         responses.get(data, "❌ خيار غير معروف"),
         parse_mode="Markdown"
     )
 
+# ---------- الخروج من المعلم الذكي ----------
+async def ai_chat_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['ai_mode'] = False
+    await update.message.reply_text("👋 تم الخروج من المعلم الذكي.")
+
+# ---------- معالج رسائل الذكاء الاصطناعي ----------
+async def ai_chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('ai_mode', False):
+        return
+    # TODO: ربط الذكاء الاصطناعي هنا لاحقاً
+    await update.message.reply_text(
+        "⏳ جاري التفكير... (سيتم إضافة الذكاء الاصطناعي قريباً)"
+    )
+
+# ---------- إلغاء العملية ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ تم الإلغاء.")
     return ConversationHandler.END
 
-# ---------- تسجيل المعالجات (فقط) ----------
+# ---------- تسجيل المعالجات ----------
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
     states={
+        NAME_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
         PHONE_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_phone)],
+        TRACK_STATE: [CallbackQueryHandler(save_track_and_request, pattern="^track_")],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
 )
 
 student_bot.add_handler(conv_handler)
-student_bot.add_handler(CallbackQueryHandler(save_track, pattern="^track_"))
 student_bot.add_handler(CallbackQueryHandler(button_callback, pattern="^(?!track_).*"))
 student_bot.add_handler(CommandHandler("exit_ai", ai_chat_exit))
 student_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_handle))
 
-logger.info("✅ Student bot handlers registered!")
+logger.info("✅ Student bot registration flow updated!")
