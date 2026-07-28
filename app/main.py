@@ -18,33 +18,48 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# متغير لتخزين مهام البوتات
-bot_tasks = []
+# ---------- دالة تشغيل البوت في خيط منفصل ----------
+async def run_bot_in_thread(bot, bot_name: str):
+    """تشغيل البوت في خيط منفصل مع حلقة أحداث مستقلة"""
+    def start_bot():
+        try:
+            # إنشاء حلقة أحداث جديدة لهذا الخيط
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # تشغيل البوت مع تعطيل إشارات النظام
+            loop.run_until_complete(bot.run_polling())
+        except Exception as e:
+            logger.exception(f"❌ {bot_name} error: {e}")
+        finally:
+            loop.close()
+    
+    # تشغيل الدالة في خيط منفصل
+    await asyncio.to_thread(start_bot)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """تشغيل البوتات باستخدام Polling في نفس حلقة الأحداث"""
+    """تشغيل البوتات في خيوط منفصلة"""
     # بدء تشغيل البوتات كمهام خلفية
+    tasks = []
     if admin_bot:
-        task = asyncio.create_task(admin_bot.run_polling())
-        bot_tasks.append(task)
-        logger.info("✅ Admin Bot started (Polling)")
+        task = asyncio.create_task(run_bot_in_thread(admin_bot, "Admin Bot"))
+        tasks.append(task)
+        logger.info("🚀 Admin Bot started in background thread")
     
     if student_bot:
-        task = asyncio.create_task(student_bot.run_polling())
-        bot_tasks.append(task)
-        logger.info("✅ Student Bot started (Polling)")
+        task = asyncio.create_task(run_bot_in_thread(student_bot, "Student Bot"))
+        tasks.append(task)
+        logger.info("🚀 Student Bot started in background thread")
     
     yield  # التطبيق يعمل هنا
     
-    # إيقاف البوتات بشكل آمن
-    logger.info("🛑 Shutting down bots...")
-    for task in bot_tasks:
+    # إلغاء المهام (البوتات ستتوقف تلقائياً عند إغلاق الخيوط)
+    for task in tasks:
         task.cancel()
-    await asyncio.gather(*bot_tasks, return_exceptions=True)
-    logger.info("✅ Bots stopped")
+    await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info("🛑 Bots stopped")
 
-# إنشاء تطبيق FastAPI (فقط لـ Health Check)
+# إنشاء تطبيق FastAPI
 app = FastAPI(
     title="Bourhan Teacher AI",
     version="1.0.0",
