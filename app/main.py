@@ -26,8 +26,8 @@ async def run_bot_in_thread(bot, bot_name: str):
             # إنشاء حلقة أحداث جديدة لهذا الخيط
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            # تشغيل البوت مع تعطيل إشارات النظام
-            loop.run_until_complete(bot.run_polling())
+            # ✅ منع محاولة إضافة Signal Handlers (لأننا في خيط غير رئيسي)
+            loop.run_until_complete(bot.run_polling(stop_signals=None))
         except Exception as e:
             logger.exception(f"❌ {bot_name} error: {e}")
         finally:
@@ -39,7 +39,6 @@ async def run_bot_in_thread(bot, bot_name: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """تشغيل البوتات في خيوط منفصلة"""
-    # بدء تشغيل البوتات كمهام خلفية
     tasks = []
     if admin_bot:
         task = asyncio.create_task(run_bot_in_thread(admin_bot, "Admin Bot"))
