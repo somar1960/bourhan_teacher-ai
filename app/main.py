@@ -26,7 +26,11 @@ async def run_bot_in_thread(bot, bot_name: str):
             # إنشاء حلقة أحداث جديدة لهذا الخيط
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            # ✅ منع محاولة إضافة Signal Handlers (لأننا في خيط غير رئيسي)
+            
+            # ✅ حذف أي ويب هوك معلق لتجنب تعارض Conflict
+            loop.run_until_complete(bot.delete_webhook())
+            
+            # تشغيل البوت مع تعطيل إشارات النظام
             loop.run_until_complete(bot.run_polling(stop_signals=None))
         except Exception as e:
             logger.exception(f"❌ {bot_name} error: {e}")
