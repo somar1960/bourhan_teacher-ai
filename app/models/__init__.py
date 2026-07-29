@@ -1,16 +1,34 @@
-from app.database import Base
+"""
+Models package for Bourhan Teacher AI.
+Import all models and enums so that Alembic can detect them.
+"""
 
-from app.models.student import Student
-from app.models.group import Group
-from app.models.file import File
-
-from app.models.homework import Homework
-from app.models.homework_submission import HomeworkSubmission
+from __future__ import annotations
 
 from app.models.exam import Exam
-from app.models.question import Question
-from app.models.option import Option
 from app.models.exam_result import ExamResult
+from app.models.file import File, FileType
+from app.models.group import Group
+from app.models.homework import Homework, HomeworkStatus
+from app.models.homework_submission import HomeworkSubmission, HomeworkSubmissionStatus
+from app.models.option import Option
+from app.models.question import Question, QuestionType
+from app.models.student import Student, StudentLevel, StudentTrack
 
-from app.models.ai_conversation import AIConversation
-from app.models.student_progress import StudentProgress
+__all__ = [
+    "Student",
+    "StudentTrack",
+    "StudentLevel",
+    "Group",
+    "File",
+    "FileType",
+    "Homework",
+    "HomeworkStatus",
+    "HomeworkSubmission",
+    "HomeworkSubmissionStatus",
+    "Exam",
+    "Question",
+    "QuestionType",
+    "Option",
+    "ExamResult",
+]
