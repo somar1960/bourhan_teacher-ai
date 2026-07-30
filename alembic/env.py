@@ -1,50 +1,68 @@
 import os
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
-from alembic import context
 import sys
+from logging.config import fileConfig
 
-# عشان يعرف يقرأ ملفات المشروع
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.database import Base
-from app.models.student import Student
-from app.models.group import Group
+import app.models
+
 
 config = context.config
 
-# ------------------------------------------------
-# 🧠 الحل السحري: تحويل الرابط تلقائياً من asyncpg إلى العادي
-# ------------------------------------------------
-database_url = os.getenv("DATABASE_URL", "")
-if database_url.startswith("postgresql+asyncpg://"):
-    database_url = database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+database_url = os.getenv("DATABASE_URL")
 
 if database_url:
+    if database_url.startswith("postgresql+asyncpg://"):
+        database_url = database_url.replace(
+            "postgresql+asyncpg://",
+            "postgresql://",
+            1,
+        )
+
     config.set_main_option("sqlalchemy.url", database_url)
 
-# باقي الكود (تكوين السجلات)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
+
 def run_migrations_offline():
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+    )
+
     with context.begin_transaction():
         context.run_migrations()
 
+
 def run_migrations_online():
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
+
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()
