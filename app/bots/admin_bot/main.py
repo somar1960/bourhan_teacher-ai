@@ -13,10 +13,9 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session
-from app.models.student import Student
+from app.models.student import Student, StudentTrack, StudentLevel
 
 logger = logging.getLogger(__name__)
-
 
 def create_admin_bot() -> Application:
     """
@@ -98,7 +97,6 @@ def create_admin_bot() -> Application:
         phone = args[1]
         
         async with async_session() as session:
-            # التحقق من عدم وجود الرقم
             result = await session.execute(
                 select(Student).where(Student.phone == phone)
             )
@@ -107,10 +105,13 @@ def create_admin_bot() -> Application:
                 await update.message.reply_text("⚠️ هذا الرقم مسجل بالفعل.")
                 return
             
+            # إضافة الطالب يدويًا مع قيم افتراضية للحقول الإجبارية
             new_student = Student(
                 name=name,
                 phone=phone,
-                is_approved=True  # عند الإضافة اليدوية، يُفعل فوراً
+                track=StudentTrack.SCIENTIFIC,    # قيمة افتراضية
+                level=StudentLevel.UNKNOWN,        # قيمة افتراضية
+                is_approved=True
             )
             session.add(new_student)
             await session.commit()
@@ -127,41 +128,48 @@ def create_admin_bot() -> Application:
         action = data.split('_')[0]
         
         async with async_session() as session:
-            result = await session.execute(
-                select(Student).where(Student.id == student_id)
-            )
-            student = result.scalar_one_or_none()
-            if not student:
-                await query.edit_message_text("❌ الطالب غير موجود.")
-                return
-            
-            if action == "approve":
-                student.is_approved = True
-                await session.commit()
-                await query.edit_message_text(f"✅ تم قبول الطالب {student.name}!")
+            try:
+                result = await session.execute(
+                    select(Student).where(Student.id == student_id)
+                )
+                student = result.scalar_one_or_none()
+                if not student:
+                    await query.edit_message_text("❌ الطالب غير موجود.")
+                    return
                 
-                # إرسال رسالة للطالب عبر البوت الحالي
-                try:
-                    await context.application.bot.send_message(
-                        chat_id=int(student.telegram_id),
-                        text="🎉 **تم قبول طلبك!**\nيمكنك الآن استخدام البوت بالكامل. أرسل /start للبدء."
-                    )
-                except Exception as e:
-                    logger.warning(f"لم نتمكن من إرسال رسالة للطالب {student.telegram_id}: {e}")
+                if action == "approve":
+                    student.is_approved = True
+                    await session.commit()
+                    await query.edit_message_text(f"✅ تم قبول الطالب {student.name}!")
                     
-            else:  # reject
-                await session.delete(student)
-                await session.commit()
-                await query.edit_message_text(f"❌ تم رفض الطالب {student.name}.")
-                
-                # إرسال رسالة للطالب عبر البوت الحالي
-                try:
-                    await context.application.bot.send_message(
-                        chat_id=int(student.telegram_id),
-                        text="❌ **للأسف، تم رفض طلبك.** يرجى التواصل مع الأستاذ للاستفسار."
-                    )
-                except Exception as e:
-                    logger.warning(f"لم نتمكن من إرسال رسالة للطالب {student.telegram_id}: {e}")
+                    # إرسال رسالة للطالب
+                    try:
+                        await context.application.bot.send_message(
+                            chat_id=int(student.telegram_id),
+                            text="🎉 **تم قبول طلبك!**\nيمكنك الآن استخدام البوت بالكامل. أرسل /start للبدء.",
+                            parse_mode="Markdown"       # إضافة parse_mode
+                        )
+                    except Exception as e:
+                        logger.warning("لم نتمكن من إرسال رسالة للطالب %s", student.telegram_id)
+                        
+                else:  # reject
+                    await session.delete(student)
+                    await session.commit()
+                    await query.edit_message_text(f"❌ تم رفض الطالب {student.name}.")
+                    
+                    try:
+                        await context.application.bot.send_message(
+                            chat_id=int(student.telegram_id),
+                            text="❌ **للأسف، تم رفض طلبك.** يرجى التواصل مع الأستاذ للاستفسار.",
+                            parse_mode="Markdown"       # إضافة parse_mode
+                        )
+                    except Exception as e:
+                        logger.warning("لم نتمكن من إرسال رسالة للطالب %s", student.telegram_id)
+                        
+            except Exception as e:
+                logger.exception("خطأ أثناء معالجة الطلب: %s", e)
+                await query.edit_message_text("❌ حدث خطأ داخلي، يرجى المحاولة لاحقًا.")
+                await session.rollback()
 
     # ---------- دوال مؤقتة لباقي الأزرار ----------
     async def groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,9 +200,7 @@ def create_admin_bot() -> Application:
     async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-        user_id = update.effective_user.id
-        if user_id != settings.owner_telegram_id:
-            await query.message.reply_text("⛔ هذا البوت للأستاذ فقط.")
+        if not await is_owner(update):   # استخدام الدالة الموحدة
             return
 
         data = query.data
@@ -244,7 +250,6 @@ def create_admin_bot() -> Application:
     application.add_handler(CommandHandler("train_ai", train_ai))
     application.add_handler(CommandHandler("settings", settings_command))
 
-    # ترتيب الـ CallbackQueryHandler مهم: handle_approval أولاً لأن نمطه أكثر تحديداً
     application.add_handler(
         CallbackQueryHandler(handle_approval, pattern="^(approve|reject)_")
     )
